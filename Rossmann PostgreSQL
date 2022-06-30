@@ -1,0 +1,183 @@
+-- Data obtained from Kaggle https://www.kaggle.com/competitions/rossmann-store-sales/data
+-- Data exploration 
+
+CREATE TABLE sales
+(
+ Store INT,
+ DayOfWeek INT,
+ Date DATE,
+ Sales NUMERIC,
+ Customers NUMERIC,
+ Open INT,
+ Promo INT,
+ StateHoliday VARCHAR(50),	
+ SchoolHoliday INT
+);
+
+CREATE TABLE storeinfo
+(
+Store INT,
+StoreType VARCHAR(50),
+Assortment VARCHAR(50),
+CompetitionDistance NUMERIC,
+CompetitionOpenSinceMonth INT,
+CompetitionOpenSinceYear INT,
+Promo2 INT,
+Promo2SinceWeek NUMERIC,
+Promo2SinceYear INT,
+PromoInterval VARCHAR(50)
+);
+
+-- Stores with the highest average sales and highest total sales
+-- Top 5 profitable stores according to total sales: 262, 817, 562, 1114, 251
+
+SELECT store, AVG(sales) AS avgsales, SUM(sales) AS totalsales
+FROM sales
+GROUP BY store
+ORDER BY SUM(sales) DESC;
+
+SELECT store, AVG(sales) AS avgsales, SUM(sales) AS totalsales
+FROM sales
+GROUP BY store
+ORDER BY SUM(sales) DESC
+LIMIT 5;
+
+-- Sales for top 5 stores
+
+SELECT store, date, sales
+FROM sales
+WHERE store =  262 OR store = 817 OR store = 562 OR store = 1114 OR store = 251
+GROUP BY 1, 2, 3;
+
+-- How number of customers impacts sales
+-- Correlation between sales and customer numbers
+
+SELECT store, SUM(sales) AS totalsales, SUM(customers) AS totalcustomers
+FROM sales
+GROUP BY store; 
+
+-- Sales by day of the week
+-- Sales are highest on Mondays and Tuesdays, Sunday is the least profitable
+
+SELECT dayofweek, AVG(sales) AS avgsales, SUM(sales) AS totalsales
+FROM sales
+GROUP BY dayofweek
+ORDER BY AVG(sales) DESC, SUM(sales) DESC;
+
+
+-- Sales when running promos
+-- Both average sales and total sales are greater when a promo is running
+
+SELECT promo, AVG(sales) AS avgsales, SUM(sales) AS totalsales
+FROM sales
+GROUP BY promo;
+
+-- Dates with the highest sales
+
+SELECT date, SUM(sales)
+FROM sales
+GROUP BY date
+ORDER BY SUM(sales) DESC;
+
+-- Added view to join calculation of average sales and total sales of each store to join with store information dataset
+
+CREATE VIEW stores
+AS 
+SELECT store, AVG(sales) AS avgsales, SUM(sales) AS totalsales
+FROM sales
+GROUP BY store
+ORDER BY AVG(sales) DESC;
+
+SELECT *
+FROM stores;
+
+-- Join view with storeinfo table
+
+SELECT si.store, si.storetype, si.competitiondistance, si.competitionopensinceyear, si.promo2, si.promointerval, ss.avgsales, ss.totalsales
+FROM storeinfo si
+JOIN stores ss
+ON si.store = ss.store;
+
+-- Store types with the highest total sales
+-- Store type a has higest sales, followed by d,c,b
+
+SELECT si.storetype, SUM(ss.totalsales) AS totalsales 
+FROM storeinfo si
+JOIN stores ss
+ON si.store = ss.store
+GROUP BY si.storetype
+ORDER BY SUM(ss.totalsales) DESC;
+
+-- Promo intervals with the highest total sales with promo intervals that began before present sales data in January 2013
+-- Promo interval of Jan,Apr,Jul,Oct has overall highest sales
+
+SELECT si.promointerval, SUM(ss.totalsales) AS totalsales
+FROM storeinfo si
+JOIN stores ss
+ON si.store = ss.store
+WHERE promo2sinceyear < 2013
+GROUP BY si.promointerval
+ORDER BY SUM(ss.totalsales) DESC;
+
+-- Temp Table
+-- Affect on one store's sales where competition opened one year after initial data collection period
+-- Sales appear to significantly drop right after competition opens and remain at a lower level
+
+DROP TABLE if exists competition;
+CREATE TEMP TABLE competition
+(
+store NUMERIC,
+competitiondistance NUMERIC,
+competitionopensincemonth NUMERIC,
+competitionopensinceyear NUMERIC,
+date DATE,
+sales NUMERIC
+);
+
+INSERT INTO competition
+SELECT si.store, si.competitiondistance, si.competitionopensincemonth, si.competitionopensinceyear, ss.date, ss.sales
+FROM storeinfo si
+JOIN sales ss
+ON si.store = ss.store
+WHERE si.competitionopensincemonth = 1 AND si.competitionopensinceyear = 2014;
+
+SELECT  store, AVG(sales) AS averagesalesafter,
+(
+    SELECT AVG(sales) AS averagesalesbefore 
+    FROM competition
+    WHERE date BETWEEN '2013-1-1' AND '2013-12-31'
+                  )
+FROM competition
+WHERE date BETWEEN '2014-1-1' AND '2015-07-15'
+GROUP BY 1;
+
+SELECT *
+FROM competition;
+
+-- CTE and Competition Info
+-- Average sales does not appear to be significantly impacted by competition distance
+
+SELECT MAX(competitiondistance), MIN(competitiondistance), AVG(competitiondistance)
+FROM storeinfo;
+
+WITH competitioninfo (store, competitiondistance, competitionopensincemonth, competitionopensinceyear, date, sales, distance)
+AS
+(
+SELECT si.store, si.competitiondistance, si.competitionopensincemonth, si.competitionopensinceyear, ss.date, ss.sales,
+CASE 
+    WHEN si.competitiondistance < 1000 THEN 'close'
+    WHEN si.competitiondistance > 10000 THEN 'far'
+    ELSE 'medium'
+    END AS distance
+FROM storeinfo si
+JOIN sales ss
+ON si.store = ss.store)
+SELECT AVG(sales) AS avgsalesclose,
+   (SELECT AVG(sales) AS avgsalesfar
+     FROM competitioninfo
+     WHERE competitionopensinceyear < 2013 AND distance = 'far'),
+   (SELECT AVG(sales) AS avgsalesmedium
+     FROM competitioninfo
+     WHERE competitionopensinceyear < 2013 AND distance = 'medium')
+FROM competitioninfo
+WHERE competitionopensinceyear < 2013 AND distance = 'close'
